@@ -1,0 +1,16 @@
+Environment:
+Works or solaris & ubuntu. I had tested the code on flare.
+
+Compile command on flare:
+/development/SUNWspro/bin/cc uniqify_v7.c -o test
+
+
+Run command:
+./test <input file path> <number of sorting processes>
+Example:
+./test datafile 5
+
+'datafile' in the hw#2 is a sample test file.
+
+
+

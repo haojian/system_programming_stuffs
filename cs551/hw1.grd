@@ -1,0 +1,8 @@
+Grade: 85
+
+
+Comments:
+
+Doesn't compile under Solaris. For future assignments you must make sure your code comiles and runs under Solaris. Used either the machines in the computer lab or ssh to flare.mathcs.emory.edu.
+Doesn't handle even sized files correctly, needs and extra '\n' at the end of an even length file.
+Segmentation fault for -t, -v, -d and -x, strtok not working as intended. Works fine when fixed. 

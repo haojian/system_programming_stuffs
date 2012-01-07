@@ -1,0 +1,5 @@
+Compiler Command:
+cc myar_v1.c -o myar
+
+Run Command:
+./myar -q *****

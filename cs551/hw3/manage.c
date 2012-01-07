@@ -1,0 +1,203 @@
+/**************Statement of Policy****************************/
+// THIS CODE IS MY OWN WORK, IT WAS WRITTEN WITHOUT CONSULTING
+// A TUTOR OR CODE WRITTEN BY OTHER STUDENTS - Haojian Jin
+/*************************************************************/
+
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include "bitmap.h"
+
+#define KEY (key_t)54545   /*Key for shared memory segment */
+#define SERVER_FIFO_NAME "fifo_server"
+#define PERM_FILE		(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+/***********Global Variable***********************/
+	
+	typedef struct{
+		pid_t compute_pid;
+		int total_perfectnums;
+		long tested_candidates;
+		long untested_candidates;
+	}process_info;
+	typedef struct{
+		pid_t computer_pid;
+		long message;
+	}compute_message;
+
+	int fd_server, fd_client = -1, fd_client_w = -1;
+	ssize_t nread;
+	char fifo_name[100];
+	int i; // Loop conter
+
+	int sid; /* segment id of shared memory segment */
+	unsigned char *bitmap_array; /* bitmap */
+	long *perfectnum_array; /* result array */
+	process_info *process_Info;  /* process array */
+	pid_t *manage_pid, *cur_pid;
+	compute_message msg2manager;
+	int total_compute_process = 0;
+	int total_perfectnum_found =0;
+
+	pid_t active_compute_list[20];
+
+/*************************************************/
+
+void clean_up(void)
+{
+	//Send signal to all the running computers.
+	for(i=0; i<20; i++)
+	{
+		if((*(process_Info+i)).compute_pid = 0)
+			break;
+		kill(active_compute_list[i], SIGINT);
+	}
+
+	sleep(5);
+
+	/* Unmap and deallocate the shared segment */
+	if (shmdt((char  *) bitmap_array) == -1) {
+		perror("shmdt");
+		exit(3);
+	}
+
+	if (shmctl(sid,IPC_RMID,0) == -1) {
+		perror("shmctl");
+		exit(3);
+	}
+	exit(0);
+}
+
+void handler(int signum)
+{
+	printf("sig invoked\n");
+	clean_up();
+}
+ 
+int handle_signals(void)
+{
+	sigset_t set;
+	struct sigaction act;
+	
+	sigfillset(&set);
+	sigprocmask(SIG_SETMASK, &set, NULL);
+	memset(&act, 0, sizeof(act));
+	sigfillset(&act.sa_mask);
+	act.sa_handler = handler;
+	sigaction(SIGINT, &act, NULL);
+	sigaction(SIGQUIT, &act, NULL);
+	sigaction(SIGHUP, &act, NULL);
+	sigemptyset(&set);
+	sigprocmask(SIG_SETMASK, &set, NULL);
+	return 1;
+}
+
+int make_fifo_name(pid_t pid, char *name, size_t name_max)
+{
+	snprintf(name, name_max, "fifo%ld", (long)pid);
+	return 1;
+}
+
+int update_perfectnum_array(long _perfectnum)
+{
+	if(total_perfectnum_found < 20)
+	{
+		perfectnum_array[total_perfectnum_found] = _perfectnum;
+		printf("%ld\n", perfectnum_array[total_perfectnum_found]);
+		total_perfectnum_found++;
+	}
+	else
+	{
+		printf("Found 20 perfect number already!\n");
+	}
+}
+
+int initialize_process_entry(int _total_compute_process, pid_t new_pid)
+{
+	(*(process_Info+_total_compute_process-1)).compute_pid= new_pid;
+	(*(process_Info+ _total_compute_process-1)).total_perfectnums = 0;
+	(*(process_Info+_total_compute_process-1)).tested_candidates = 0;
+	active_compute_list[_total_compute_process-1] = new_pid;
+	for(i=0; i < total_compute_process; i++)
+	{	
+		(*(process_Info+i)).untested_candidates = (int)(256000/_total_compute_process);
+	}
+
+	//deal with special case when 256000 couldn't be divided by total_compute_process.
+	(*(process_Info+total_compute_process-1)).untested_candidates = (int)(256000/_total_compute_process) + 256000%total_compute_process;
+}
+
+int main()
+{
+	handle_signals();
+	
+	//Set up the memory space pointer
+	if((sid = shmget (KEY, 20 * sizeof(long) + 20 * sizeof(process_info) + sizeof(pid_t) + (256000/8+1)*sizeof(unsigned char), IPC_CREAT | 0660))==-1)
+	{
+		perror("shmget");
+		exit(1);
+	}
+
+	if((bitmap_array = ((unsigned char*)shmat(sid, NULL, 0))) == (unsigned char *) -1)
+	{
+		perror("bitmap shmat");
+		exit(2);
+	}
+
+	bitmap_init(256000, bitmap_array);
+
+	perfectnum_array = (long *)(bitmap_array+ 256000/8+1);
+	process_Info = (process_info *) (perfectnum_array + 20);
+	
+	manage_pid = (pid_t *)(process_Info+20);
+	*manage_pid = getpid();
+
+	//Register the compute process.
+	int fd_server, fd_client, fd_server_w = -1;
+	ssize_t nread;
+	compute_message msg;
+	char fifo_name[100];
+	printf("Manager %ld has been started!\n", *manage_pid);
+
+	if(mkfifo(SERVER_FIFO_NAME, PERM_FILE) == -1 && errno != EEXIST)
+	{
+		printf("Error in server pipe");
+	}
+	
+	fd_server = open(SERVER_FIFO_NAME, O_RDONLY);
+	fd_server_w = open(SERVER_FIFO_NAME, O_WRONLY);
+	while(1)
+	{
+		nread = read(fd_server, &msg, sizeof(msg));
+		if(nread == 0)
+			errno = ENETDOWN;
+		//Registe the compute process.	
+		if(msg.message == 0)
+		{
+			total_compute_process++;
+			msg.message = -total_compute_process;
+			printf("Process %ld registered!\n", msg.computer_pid);
+			initialize_process_entry(total_compute_process, msg.computer_pid);
+		}
+		//Update the perfect number arrays
+		else if(msg.message>0)
+		{
+			printf("Perfect numbers received!\n");
+			update_perfectnum_array(msg.message);
+		}
+		make_fifo_name(msg.computer_pid, fifo_name, sizeof(fifo_name));
+		fd_client = open(fifo_name, O_WRONLY);
+		write(fd_client, &msg, sizeof(msg));
+		close(fd_client);
+	}
+	close(fd_server);
+	close(fd_server_w);
+	exit(0);
+}
